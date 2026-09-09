@@ -33,6 +33,37 @@
 
   <main id="app" class="app">
 
+    <!-- ═══ Root storefront: dynamic catalog (bio-link landing) ═══ -->
+    <section id="storefront" class="storefront" hidden>
+      <header class="storefront__hero">
+        <p class="storefront__eyebrow">Curated daily · Pinned with love</p>
+        <h1 class="storefront__title">Kitchen finds that look expensive<br class="hide-sm" /> and cost less</h1>
+        <p class="storefront__sub">
+          Hand-picked organizers, gadgets and upgrades for a tidier, prettier
+          kitchen — every find buyer-rated and price-checked by our editors.
+        </p>
+      </header>
+
+      <div class="storefront__bar">
+        <h2 class="section-title storefront__shelf">The shelf</h2>
+        <span class="storefront__count" id="catalog-count" aria-live="polite"></span>
+      </div>
+
+      <!-- Cards render progressively into this grid (fetch by fetch) -->
+      <div class="grid grid--catalog" id="catalog-grid" aria-busy="true"></div>
+
+      <!-- Catalog unavailable (API hiccup / empty repo): graceful empty state -->
+      <div class="storefront__empty" id="catalog-empty" hidden>
+        <p class="storefront__empty-title">The shelf is being restocked</p>
+        <p class="storefront__empty-text">
+          Fresh finds are on the way — browse our latest pins in the meantime.
+        </p>
+        <a class="cta cta--wide" href="https://www.pinterest.com/" rel="noopener" target="_blank">
+          Browse more finds on Pinterest
+        </a>
+      </div>
+    </section>
+
     <!-- ═══ Loading skeleton (visible until data arrives) ═══ -->
     <section id="skeleton" class="product" aria-busy="true" aria-label="Loading product">
       <div class="gallery gallery--skeleton">

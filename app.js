@@ -16,7 +16,11 @@
 
 const CONFIG = {
   fetchTimeoutMs: 8000,
-  pinterestProfile: "https://www.pinterest.com/", // fallback CTA destination
+  // Public repo whose products/ directory is the live catalog source.
+  repo: "mahmoudsehli74-alt/NeatSpace-Kitchen",
+  catalogMax: 24, // cards rendered on the root storefront
+  catalogCacheTtlMs: 30 * 60 * 1000,
+  pinterestProfile: "https://www.pinterest.com/neatspace_kitchen/",
   angleLabels: {
     "budget-luxury": "Budget-Luxury Pick",
     "problem-solver": "Problem Solver",
@@ -253,7 +257,126 @@ function hydrateProduct(doc) {
   if (ogImage && heroImage) ogImage.setAttribute("content", heroImage);
 }
 
-/* ── fallback (404 / missing id) ──────────────────────────────────────── */
+/* ── catalog (root storefront) ──────────────────────────────────────────
+   The bridge committer pushes ./products/{key}.json continuously; GitHub
+   Pages has no directory index, so the root catalog enumerates the folder
+   through the PUBLIC Contents API (no auth, 60 req/h per IP — sessionStorage
+   caches the listing for 30 min to stay far below it). Fresh products show
+   up on the root page within one cache cycle of being pinned — no manual
+   featured.json to maintain.
+   Every rendered value is marketplace content: textContent only, never
+   innerHTML (the injection discipline the backend holds, the frontend
+   mirrors). Affiliate links carry rel="nofollow sponsored noopener" so the
+   attribution chain matches the deep-link CTA exactly. */
+
+function catalogSessionKey() {
+  return `ns-catalog-${CONFIG.repo}/products`;
+}
+
+async function listCatalogKeys() {
+  const cached = sessionStorage.getItem(catalogSessionKey());
+  if (cached) {
+    try {
+      const { keys, ts } = JSON.parse(cached);
+      if (Array.isArray(keys) && Date.now() - ts < CONFIG.catalogCacheTtlMs) {
+        return keys;
+      }
+    } catch { /* corrupted cache — refetch */ }
+  }
+  const url = `https://api.github.com/repos/${CONFIG.repo}/contents/products`;
+  const files = await fetchJson(url, { timeoutMs: CONFIG.fetchTimeoutMs });
+  if (!Array.isArray(files)) throw new Error("unexpected catalog listing");
+  const keys = files
+    .map((f) => (f && f.type === "file" && typeof f.name === "string" ? f.name : ""))
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => name.slice(0, -".json".length))
+    .filter((key) => sanitizeId(key))
+    .sort()
+    .reverse(); // newest first: bridge names are monotonic per product, and
+                // within a batch GitHub returns them alphabetically
+  try {
+    sessionStorage.setItem(catalogSessionKey(),
+                          JSON.stringify({ keys, ts: Date.now() }));
+  } catch { /* private mode: skip caching */ }
+  return keys;
+}
+
+/** Product card: image, truncated title, price+deal chip, and a CTA that
+ *  goes straight to the affiliate link (bypassing the detail page keeps the
+ *  root experience fast; the whole card still deep-links to the pin landing
+ *  via the title area for anyone who wants the gallery view). */
+function buildCatalogCard(doc) {
+  const product = doc.product || {};
+  const price = product.price || {};
+  const images = product.images || [];
+  const thumb = product.image || images[0] || PLACEHOLDER_IMAGE;
+  const current = formatPrice(price.current, price.currency);
+  const original = formatPrice(price.original, price.currency);
+  const deal = discountPercent(price.current, price.original);
+
+  const img = el("img", {
+    src: thumb,
+    alt: "",
+    loading: "lazy",
+    decoding: "async",
+    referrerpolicy: "no-referrer",
+  });
+  img.onerror = () => { img.src = PLACEHOLDER_IMAGE; };
+
+  const card = el("a", { class: "card card--catalog", href: `./?id=${encodeURIComponent(doc.key || "")}` },
+    el("div", { class: "card__thumb" }, img,
+      deal ? el("span", { class: "card__deal", text: deal }) : null),
+    el("div", { class: "card__body" },
+      el("div", { class: "card__title", text: doc.title || product.title || "Curated find" }),
+      el("div", { class: "card__row" },
+        el("span", { class: "card__price", text: current || "See price" }),
+        original ? el("span", { class: "card__price-old", text: original }) : null),
+      el("span", { class: "card__cta", text: "Shop Now" })
+    )
+  );
+  return card;
+}
+
+/** Progressive catalog render: cards appear as their JSON arrives instead of
+ *  waiting for the whole batch (Order: newest keys first). */
+async function renderCatalog(keys) {
+  const grid = $("catalog-grid");
+  const shown = keys.slice(0, CONFIG.catalogMax);
+  const docs = await Promise.allSettled(
+    shown.map((key) => fetchJson(`./products/${encodeURIComponent(key)}.json`))
+  );
+  docs.forEach((result) => {
+    if (result.status === "fulfilled" && result.value && result.value.key) {
+      grid.appendChild(buildCatalogCard(result.value));
+    }
+  });
+  $("catalog-count").textContent =
+    grid.children.length ? `${grid.children.length} curated finds` : "";
+  return grid.children.length;
+}
+
+async function showStorefront() {
+  $("skeleton").hidden = true;
+  $("product").hidden = true;
+  const home = $("storefront");
+  home.hidden = false;
+  document.title = "NeatSpace Kitchen — Curated Kitchen Finds";
+
+  const grid = $("catalog-grid");
+  let rendered = 0;
+  try {
+    const keys = await listCatalogKeys();
+    rendered = await renderCatalog(keys);
+  } catch (error) {
+    console.warn("[neatspace] catalog listing failed:", error);
+  }
+  if (!rendered) {
+    // API hiccup or empty catalog: don't leave the visitor with a bare page
+    $("catalog-empty").hidden = false;
+  }
+}
+
+/* ── fallback (404 / missing product JSON) ────────────────────────────── */
 
 async function showFallback() {
   $("skeleton").hidden = true;
@@ -306,7 +429,8 @@ function showProduct() {
 function init() {
   const id = productIdFromUrl();
   if (!id) {
-    showFallback();
+    // Root visit (bio link): the storefront catalog, not the 404 hero.
+    showStorefront();
     return;
   }
   fetchJson(`./products/${encodeURIComponent(id)}.json`)
