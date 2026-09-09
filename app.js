@@ -55,6 +55,7 @@ function el(tag, attrs = {}, ...children) {
     else if (value != null) node.setAttribute(key, value);
   }
   for (const child of children) {
+    if (child == null) continue; // conditional children arrive as null — skip
     node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
   }
   return node;
